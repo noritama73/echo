@@ -28,6 +28,7 @@ type (
 		// - time_rfc3339_nano
 		// - time_custom
 		// - id (Request ID)
+		// - id_custom
 		// - remote_ip
 		// - uri
 		// - host
@@ -53,6 +54,9 @@ type (
 
 		// Optional. Default value DefaultLoggerConfig.CustomTimeFormat.
 		CustomTimeFormat string `yaml:"custom_time_format"`
+
+		// Optional. Default value null.
+		CustomIDTarget string `yaml:"custom_id_target"`
 
 		// Output is a writer where logs in JSON format are written.
 		// Optional. Default value os.Stdout.
@@ -140,6 +144,13 @@ func LoggerWithConfig(config LoggerConfig) echo.MiddlewareFunc {
 						id = res.Header().Get(echo.HeaderXRequestID)
 					}
 					return buf.WriteString(id)
+				case "id_custom":
+					if config.CustomIDTarget != "" {
+						customID, ok := c.Get(config.CustomIDTarget).(string)
+						if ok {
+							return buf.WriteString(customID)
+						}
+					}
 				case "remote_ip":
 					return buf.WriteString(c.RealIP())
 				case "host":

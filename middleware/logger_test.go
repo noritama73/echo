@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -170,6 +171,40 @@ func TestLoggerCustomTimestamp(t *testing.T) {
 	loggedTime := *(*string)(unsafe.Pointer(objs["time"]))
 	_, err := time.Parse(customTimeFormat, loggedTime)
 	assert.Error(t, err)
+}
+
+func TestLoggerCustomID(t *testing.T) {
+	userIDKey := "USER-ID-KEY"
+	userID := "testUserID"
+
+	buf := new(bytes.Buffer)
+	e := echo.New()
+	e.Use(LoggerWithConfig(LoggerConfig{
+		Format: `{"time":"${time_rfc3399_nano}","id":"${id}","user_id":"${id_custom}","remote_ip":"${remote_ip}","host":"${host}","user_agent":"${user_agent}",` +
+			`"method":"${method}","uri":"${uri}","status":${status}, "latency":${latency},` +
+			`"latency_human":"${latency_human}","bytes_in":${bytes_in}, "path":"${path}", "referer":"${referer}",` +
+			`"bytes_out":${bytes_out},"ch":"${header:X-Custom-Header}",` +
+			`"us":"${query:username}", "cf":"${form:username}", "session":"${cookie:session}"}` + "\n",
+		CustomIDTarget: userIDKey,
+		Output:         buf,
+	}))
+
+	e.GET("/", func(c echo.Context) error {
+		c.Set(userIDKey, userID)
+		return c.String(http.StatusOK, "custom id test")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	var objs map[string]*json.RawMessage
+	if err := json.Unmarshal(buf.Bytes(), &objs); err != nil {
+		panic(err)
+	}
+	loggedUserID, err := strconv.Unquote(*(*string)(unsafe.Pointer(objs["user_id"])))
+	assert.NoError(t, err)
+	assert.Equal(t, userID, loggedUserID)
 }
 
 func BenchmarkLoggerWithConfig_withoutMapFields(b *testing.B) {
