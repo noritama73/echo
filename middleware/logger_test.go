@@ -7,14 +7,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strconv"
 	"strings"
+	// "fmt"
 	"testing"
 	"time"
 	"unsafe"
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLogger(t *testing.T) {
@@ -173,9 +174,12 @@ func TestLoggerCustomTimestamp(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestLoggerCustomID(t *testing.T) {
-	userIDKey := "USER-ID-KEY"
-	userID := "testUserID"
+func TestLoggerCustomContext(t *testing.T) {
+	customContextMap := map[string]string{}
+	customContextTag := "id_custom"
+	valueInContext := "USER_ID_KEY"
+	customContextMap[customContextTag] = valueInContext
+	userID := "u_testUserID"
 
 	buf := new(bytes.Buffer)
 	e := echo.New()
@@ -185,26 +189,62 @@ func TestLoggerCustomID(t *testing.T) {
 			`"latency_human":"${latency_human}","bytes_in":${bytes_in}, "path":"${path}", "referer":"${referer}",` +
 			`"bytes_out":${bytes_out},"ch":"${header:X-Custom-Header}",` +
 			`"us":"${query:username}", "cf":"${form:username}", "session":"${cookie:session}"}` + "\n",
-		CustomIDTarget: userIDKey,
+		CustomContextMap: customContextMap,
 		Output:         buf,
 	}))
 
 	e.GET("/", func(c echo.Context) error {
-		c.Set(userIDKey, userID)
+		c.Set(valueInContext, userID)
 		return c.String(http.StatusOK, "custom id test")
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/?username=apagano-param&password=secret", nil)
+	req.RequestURI = "/"
+	req.Header.Add(echo.HeaderXRealIP, "127.0.0.1")
+	req.Header.Add("Referer", "google.com")
+	req.Header.Add("User-Agent", "echo-tests-agent")
+	req.Header.Add("X-Custom-Header", "AAA-CUSTOM-VALUE")
+	req.Header.Add("X-Request-ID", "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+	req.Header.Add("Cookie", "_ga=GA1.2.000000000.0000000000; session=ac08034cd216a647fc2eb62f2bcf7b810")
+	req.Form = url.Values{
+		"username": []string{"apagano-form"},
+		"password": []string{"secret-form"},
+	}
+
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
-	var objs map[string]*json.RawMessage
-	if err := json.Unmarshal(buf.Bytes(), &objs); err != nil {
-		panic(err)
+	cases := map[string]bool{
+		userID:																	true,
+		"apagano-param":                        true, // ↓ check whether existing tags are not broken
+		"apagano-form":                         true,
+		"AAA-CUSTOM-VALUE":                     true,
+		"BBB-CUSTOM-VALUE":                     false,
+		"secret-form":                          false,
+		"hexvalue":                             false,
+		"GET":                                  true,
+		"127.0.0.1":                            true,
+		"\"path\":\"/\"":                       true,
+		"\"uri\":\"/\"":                        true,
+		"\"status\":200":                       true,
+		"\"bytes_in\":0":                       true,
+		"google.com":                           true,
+		"echo-tests-agent":                     true,
+		"6ba7b810-9dad-11d1-80b4-00c04fd430c8": true,
+		"ac08034cd216a647fc2eb62f2bcf7b810":    true,
 	}
-	loggedUserID, err := strconv.Unquote(*(*string)(unsafe.Pointer(objs["user_id"])))
-	assert.NoError(t, err)
-	assert.Equal(t, userID, loggedUserID)
+
+	for token, present := range cases {
+		assert.True(t, strings.Contains(buf.String(), token) == present, "Case: "+token)
+	}
+
+	t.Run("overwite existing tag", func (t *testing.T) {
+		customContextMap["User-Agent"] = "echo-overwritten-agent" // overwrite
+		cases["echo-invalid-agent"] = false
+		var obj interface{}
+		require.NoError(t, json.Unmarshal(buf.Bytes(), &obj))
+		assert.Equal(t, "echo-tests-agent", obj.(map[string]interface{})["user_agent"]) // existing tag is never overwritten
+	})
 }
 
 func BenchmarkLoggerWithConfig_withoutMapFields(b *testing.B) {

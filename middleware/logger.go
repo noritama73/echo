@@ -56,7 +56,7 @@ type (
 		CustomTimeFormat string `yaml:"custom_time_format"`
 
 		// Optional. Default value null.
-		CustomIDTarget string `yaml:"custom_id_target"`
+		CustomContextMap map[string]string // contextの任意の要素を吐けることがわかる命名がいい
 
 		// Output is a writer where logs in JSON format are written.
 		// Optional. Default value os.Stdout.
@@ -144,13 +144,6 @@ func LoggerWithConfig(config LoggerConfig) echo.MiddlewareFunc {
 						id = res.Header().Get(echo.HeaderXRequestID)
 					}
 					return buf.WriteString(id)
-				case "id_custom":
-					if config.CustomIDTarget != "" {
-						customID, ok := c.Get(config.CustomIDTarget).(string)
-						if ok {
-							return buf.WriteString(customID)
-						}
-					}
 				case "remote_ip":
 					return buf.WriteString(c.RealIP())
 				case "host":
@@ -216,6 +209,13 @@ func LoggerWithConfig(config LoggerConfig) echo.MiddlewareFunc {
 						if err == nil {
 							return buf.Write([]byte(cookie.Value))
 						}
+					}
+				}
+				if contextKey, ok := config.CustomContextMap[tag]; ok {
+					customContext, valid := c.Get(contextKey).(string)
+					prefix := "u_"
+					if valid {
+						return buf.WriteString(prefix + customContext)
 					}
 				}
 				return 0, nil
